@@ -1,83 +1,108 @@
-"""Flask API for uploading and processing PDF files.
-
-This module exposes:
-- `POST /upload`: accepts a PDF in multipart/form-data using key `file`
-  and returns the first 1000 characters extracted with PyPDF2.
-
-Designed to be compatible with Render/Gunicorn deployments.
-"""
+"""Production-ready Flask API to convert PDF files to Word (.docx)."""
 
 from __future__ import annotations
 
-import io
 import os
+import shutil
+import tempfile
+from pathlib import Path
 
-from flask import Flask, jsonify, request
+from flask import Flask, after_this_request, jsonify, request, send_file
 from flask_cors import CORS
-from PyPDF2 import PdfReader
+from werkzeug.exceptions import RequestEntityTooLarge
+from werkzeug.utils import secure_filename
 
-# Flask application object used by Gunicorn/Render: `gunicorn app:app`
+from pdf2docx import Converter
+
+# Flask app object used by Gunicorn/Render (`gunicorn app:app`).
 app = Flask(__name__)
 
-# Enable CORS for frontend communication.
+# Enable Cross-Origin Resource Sharing for frontend clients.
 CORS(app)
 
-# Limit output text length for performance.
-MAX_OUTPUT_CHARS = 1000
+# Limit upload size to 20 MB for safer production behavior.
+app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
+
+# Allowed file extensions.
+ALLOWED_EXTENSIONS = {".pdf"}
 
 
 @app.get("/")
 def healthcheck():
-    """Simple health endpoint to verify the service is running."""
-    return jsonify({"status": "ok", "message": "Service is running"})
+    """Simple health route for Render/monitoring checks."""
+    return jsonify({"status": "ok", "message": "PDF to DOCX API is running"})
 
 
-@app.post("/upload")
-def upload_pdf():
-    """Receive a PDF file and return extracted text (truncated)."""
-    # Validate that the form-data contains a file entry.
+@app.errorhandler(RequestEntityTooLarge)
+def handle_large_file(_error):
+    """Return a clear error when file size exceeds MAX_CONTENT_LENGTH."""
+    return jsonify({"status": "error", "message": "File too large. Maximum size is 20 MB."}), 413
+
+
+@app.post("/convert")
+def convert_pdf_to_docx():
+    """Accept a PDF file and return the converted DOCX file."""
+    # Validate multipart form-data contains key "file".
     if "file" not in request.files:
         return jsonify({"status": "error", "message": "No file provided (key must be 'file')."}), 400
 
-    file_storage = request.files["file"]
+    uploaded_file = request.files["file"]
 
-    # Validate selected file.
-    if not file_storage or file_storage.filename == "":
+    # Validate selected file exists.
+    if not uploaded_file or uploaded_file.filename == "":
         return jsonify({"status": "error", "message": "No file selected."}), 400
 
-    # Basic file type validation by extension.
-    filename = file_storage.filename.lower()
-    if not filename.endswith(".pdf"):
-        return jsonify({"status": "error", "message": "Invalid file type. Please upload a PDF."}), 400
+    original_name = secure_filename(uploaded_file.filename)
+    suffix = Path(original_name).suffix.lower()
+
+    # Validate file extension.
+    if suffix not in ALLOWED_EXTENSIONS:
+        return jsonify({"status": "error", "message": "Invalid file type. Please upload a PDF file."}), 400
+
+    # Create a unique temporary directory for this request.
+    temp_dir = tempfile.mkdtemp(prefix="pdf_to_docx_")
+
+    # Build temporary file paths.
+    pdf_path = os.path.join(temp_dir, "input.pdf")
+    docx_path = os.path.join(temp_dir, "output.docx")
 
     try:
-        # Read file content into memory then parse with PyPDF2.
-        pdf_bytes = file_storage.read()
-        if not pdf_bytes:
-            return jsonify({"status": "error", "message": "Uploaded file is empty."}), 400
+        # Save uploaded PDF temporarily.
+        uploaded_file.save(pdf_path)
 
-        reader = PdfReader(io.BytesIO(pdf_bytes))
+        # Convert PDF to DOCX using pdf2docx.
+        converter = Converter(pdf_path)
+        try:
+            converter.convert(docx_path)
+        finally:
+            converter.close()
 
-        # Extract text page by page.
-        extracted_parts: list[str] = []
-        for page in reader.pages:
-            page_text = page.extract_text() or ""
-            extracted_parts.append(page_text)
+        # Ensure output was created before returning.
+        if not os.path.exists(docx_path):
+            return jsonify({"status": "error", "message": "Conversion failed. Could not generate DOCX file."}), 500
 
-        extracted_text = "\n".join(extracted_parts).strip()
+        output_name = f"{Path(original_name).stem}.docx"
 
-        return jsonify(
-            {
-                "status": "ok",
-                "content": extracted_text[:MAX_OUTPUT_CHARS],
-            }
+        @after_this_request
+        def cleanup_temp_files(response):
+            """Delete temporary directory and files after response is sent."""
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            return response
+
+        # Return generated DOCX as downloadable file.
+        return send_file(
+            docx_path,
+            as_attachment=True,
+            download_name=output_name,
+            mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
     except Exception:
-        # Avoid leaking internal exception details in production responses.
+        # Best-effort cleanup on failures before response finalization.
+        shutil.rmtree(temp_dir, ignore_errors=True)
         return jsonify({"status": "error", "message": "Invalid or unreadable PDF file."}), 400
 
 
 if __name__ == "__main__":
-    # Local development server. In production, use gunicorn: `gunicorn app:app`.
+    # For local development. Render/Gunicorn should use: gunicorn app:app
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
