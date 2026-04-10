@@ -8,13 +8,13 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
-from flask import Flask, jsonify, request, send_file, url_for
+from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Security: 20 MB max upload size.
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
@@ -67,22 +67,24 @@ def cleanup_expired_files(index: dict) -> dict:
 
 @app.errorhandler(RequestEntityTooLarge)
 def handle_large_file(_error):
-    return jsonify({"status": "error", "message": "Fichier trop volumineux (max 20 MB)."}), 413
+    return jsonify({"error": "Fichier trop volumineux (max 20 MB)."}), 413
 
 
 @app.post("/upload")
 def upload_file():
     """Receive a file, store it, and return a unique download URL."""
     if "file" not in request.files:
-        return jsonify({"status": "error", "message": "Aucun fichier reçu (clé attendue: 'file')."}), 400
+        return jsonify({"error": "Aucun fichier reçu (clé attendue: 'file')."}), 400
 
     uploaded_file = request.files["file"]
     if not uploaded_file or uploaded_file.filename == "":
-        return jsonify({"status": "error", "message": "Aucun fichier sélectionné."}), 400
+        return jsonify({"error": "Aucun fichier sélectionné."}), 400
+
+    print(f"Fichier reçu: {uploaded_file.filename}")
 
     original_filename = secure_filename(uploaded_file.filename)
     if not original_filename:
-        return jsonify({"status": "error", "message": "Nom de fichier invalide."}), 400
+        return jsonify({"error": "Nom de fichier invalide."}), 400
 
     ensure_storage()
     index = cleanup_expired_files(load_index())
@@ -94,7 +96,7 @@ def upload_file():
     try:
         uploaded_file.save(destination)
     except OSError:
-        return jsonify({"status": "error", "message": "Impossible de sauvegarder le fichier."}), 500
+        return jsonify({"error": "Impossible de sauvegarder le fichier."}), 500
 
     created_at = int(time.time())
     index[file_id] = {
@@ -105,7 +107,8 @@ def upload_file():
     }
     save_index(index)
 
-    download_url = request.url_root.rstrip("/") + url_for("download_file", id=file_id)
+    download_url = f"https://back-end-serveur-1.onrender.com/download/{file_id}"
+    print(f"Lien généré: {download_url}")
     return jsonify({"download_url": download_url}), 201
 
 
@@ -117,13 +120,13 @@ def download_file(id: str):
 
     record = index.get(id)
     if not record:
-        return jsonify({"status": "error", "message": "ID invalide ou fichier expiré."}), 404
+        return jsonify({"error": "ID invalide ou fichier expiré."}), 404
 
     file_path = Path(record.get("path", ""))
     if not file_path.exists():
         index.pop(id, None)
         save_index(index)
-        return jsonify({"status": "error", "message": "Fichier introuvable."}), 404
+        return jsonify({"error": "Fichier introuvable."}), 404
 
     return send_file(file_path, as_attachment=True, download_name=record.get("filename", file_path.name))
 
