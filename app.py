@@ -1,108 +1,107 @@
-"""Production-ready Flask API to convert PDF files to Word (.docx)."""
+"""Flask API to extract table rows (Ref, Designation, Quantite, Unite) from a PDF."""
 
 from __future__ import annotations
 
+import io
 import os
-import shutil
-import tempfile
-from pathlib import Path
+import re
+from typing import Dict, List
 
-from flask import Flask, after_this_request, jsonify, request, send_file
+import pdfplumber
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from werkzeug.exceptions import RequestEntityTooLarge
-from werkzeug.utils import secure_filename
 
-from pdf2docx import Converter
-
-# Flask app object used by Gunicorn/Render (`gunicorn app:app`).
 app = Flask(__name__)
-
-# Enable Cross-Origin Resource Sharing for frontend clients.
 CORS(app)
 
-# Limit upload size to 20 MB for safer production behavior.
-app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
+# Protect the API from very large uploads.
+app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20 MB
 
-# Allowed file extensions.
-ALLOWED_EXTENSIONS = {".pdf"}
+# Pattern tuned for lines like:
+# 001BOLB8X40 BOULON BICHROMATE M8X40 32 PIE
+ROW_PATTERN = re.compile(
+    r"^(?P<ref>\S+)\s+(?P<designation>.+?)\s+(?P<quantite>\d+(?:[.,]\d+)?)\s+(?P<unite>[A-Za-zÀ-ÿ]{2,10})$"
+)
 
 
-@app.get("/")
-def healthcheck():
-    """Simple health route for Render/monitoring checks."""
-    return jsonify({"status": "ok", "message": "PDF to DOCX API is running"})
+def normalize_text(value: str) -> str:
+    """Trim and collapse duplicated spaces in text."""
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def parse_row(line: str) -> Dict[str, str] | None:
+    """Parse a candidate line and return a normalized row if it matches expected columns."""
+    cleaned_line = normalize_text(line)
+    match = ROW_PATTERN.match(cleaned_line)
+    if not match:
+        return None
+
+    return {
+        "Ref": normalize_text(match.group("ref")),
+        "Designation": normalize_text(match.group("designation")),
+        "Quantite": normalize_text(match.group("quantite")).replace(",", "."),
+        "Unite": normalize_text(match.group("unite")).upper(),
+    }
+
+
+def extract_rows_from_pdf(file_bytes: bytes) -> List[Dict[str, str]]:
+    """Extract and parse rows from all pages of a PDF file represented as bytes."""
+    rows: List[Dict[str, str]] = []
+
+    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text() or ""
+            for raw_line in text.splitlines():
+                parsed = parse_row(raw_line)
+                if parsed:
+                    rows.append(parsed)
+
+    return rows
 
 
 @app.errorhandler(RequestEntityTooLarge)
 def handle_large_file(_error):
-    """Return a clear error when file size exceeds MAX_CONTENT_LENGTH."""
-    return jsonify({"status": "error", "message": "File too large. Maximum size is 20 MB."}), 413
+    return jsonify({"status": "error", "message": "Fichier trop volumineux (max 20 MB)."}), 413
 
 
-@app.post("/convert")
-def convert_pdf_to_docx():
-    """Accept a PDF file and return the converted DOCX file."""
-    # Validate multipart form-data contains key "file".
+@app.post("/")
+def extract_pdf_data():
+    """Receive a PDF and return extracted table data as JSON."""
     if "file" not in request.files:
-        return jsonify({"status": "error", "message": "No file provided (key must be 'file')."}), 400
+        return jsonify({"status": "error", "message": "Aucun fichier reçu (clé attendue: 'file')."}), 400
 
     uploaded_file = request.files["file"]
 
-    # Validate selected file exists.
     if not uploaded_file or uploaded_file.filename == "":
-        return jsonify({"status": "error", "message": "No file selected."}), 400
+        return jsonify({"status": "error", "message": "Aucun fichier sélectionné."}), 400
 
-    original_name = secure_filename(uploaded_file.filename)
-    suffix = Path(original_name).suffix.lower()
-
-    # Validate file extension.
-    if suffix not in ALLOWED_EXTENSIONS:
-        return jsonify({"status": "error", "message": "Invalid file type. Please upload a PDF file."}), 400
-
-    # Create a unique temporary directory for this request.
-    temp_dir = tempfile.mkdtemp(prefix="pdf_to_docx_")
-
-    # Build temporary file paths.
-    pdf_path = os.path.join(temp_dir, "input.pdf")
-    docx_path = os.path.join(temp_dir, "output.docx")
+    if not uploaded_file.filename.lower().endswith(".pdf"):
+        return jsonify({"status": "error", "message": "Fichier invalide. Merci d'envoyer un PDF."}), 400
 
     try:
-        # Save uploaded PDF temporarily.
-        uploaded_file.save(pdf_path)
+        pdf_content = uploaded_file.read()
+        if not pdf_content:
+            return jsonify({"status": "error", "message": "Le fichier PDF est vide."}), 400
 
-        # Convert PDF to DOCX using pdf2docx.
-        converter = Converter(pdf_path)
-        try:
-            converter.convert(docx_path)
-        finally:
-            converter.close()
+        rows = extract_rows_from_pdf(pdf_content)
 
-        # Ensure output was created before returning.
-        if not os.path.exists(docx_path):
-            return jsonify({"status": "error", "message": "Conversion failed. Could not generate DOCX file."}), 500
+        if not rows:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": "Aucune ligne exploitable trouvée (colonnes Ref, Designation, Quantite, Unite).",
+                }
+            ), 422
 
-        output_name = f"{Path(original_name).stem}.docx"
+        return jsonify(rows), 200
 
-        @after_this_request
-        def cleanup_temp_files(response):
-            """Delete temporary directory and files after response is sent."""
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            return response
-
-        # Return generated DOCX as downloadable file.
-        return send_file(
-            docx_path,
-            as_attachment=True,
-            download_name=output_name,
-            mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        )
+    except pdfplumber.pdfminer.pdfparser.PDFSyntaxError:
+        return jsonify({"status": "error", "message": "PDF invalide ou corrompu."}), 400
     except Exception:
-        # Best-effort cleanup on failures before response finalization.
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        return jsonify({"status": "error", "message": "Invalid or unreadable PDF file."}), 400
+        return jsonify({"status": "error", "message": "Erreur interne lors de l'extraction du PDF."}), 500
 
 
 if __name__ == "__main__":
-    # For local development. Render/Gunicorn should use: gunicorn app:app
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)

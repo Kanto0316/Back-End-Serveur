@@ -1,4 +1,4 @@
 flask
-gunicorn
-pdf2docx
 flask-cors
+pdfplumber
+gunicorn
