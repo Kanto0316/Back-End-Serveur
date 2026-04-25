@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+node_modules/
 file_index.json
 uploads/*
 !uploads/.gitkeep

@@ -1,27 +1,89 @@
-# Back-End-Serveur
+# Back-End-Serveur (Node.js + Express)
 
-Backend Flask pour transfert de fichiers.
+API backend prête pour Render pour convertir un fichier Excel (`.xlsx`/`.xls`) en JSON téléchargeable.
 
-## Endpoints
+## Stack
 
-- `POST /upload` : reçoit un fichier (`request.files['file']`), le stocke dans `uploads/`, puis retourne une URL unique de téléchargement.
-- `GET /download/<id>` : télécharge le fichier associé à l'ID.
-- `GET /health` : endpoint de vérification simple.
+- Node.js
+- Express
+- multer
+- xlsx
+- cors
 
-## Sécurité et robustesse
+## Endpoint principal
 
-- Taille maximale de fichier : **20 MB**.
-- Nettoyage du nom de fichier avec `secure_filename`.
-- Gestion des erreurs (fichier absent, nom invalide, ID invalide, fichier expiré/introuvable).
-- CORS activé via `flask-cors`.
+### `POST /api/excel-to-json`
 
-## Bonus implémenté
+- Upload attendu via `multipart/form-data`
+- Champ fichier : **`file`**
+- Taille max : **5MB**
+- Extensions autorisées : **.xlsx** et **.xls**
 
-- Les fichiers expirent automatiquement après **24h** (suppression au prochain accès upload/download).
+### Comportement
 
-## Lancer en local
+1. Reçoit le fichier Excel
+2. Lit uniquement la première feuille
+3. Cherche les colonnes :
+   - `code` / `Code` / `CODE`
+   - `Désignation` / `Designation` / `designation`
+4. Nettoie les valeurs :
+   - conversion en string
+   - `trim()`
+   - ignore les lignes totalement vides
+5. Retourne un fichier JSON téléchargeable :
+   - `Content-Type: application/json`
+   - `Content-Disposition: attachment; filename="suggestions.json"`
+
+Format retourné :
+
+```json
+[
+  {
+    "code": "ABC123",
+    "designation": "Produit exemple"
+  }
+]
+```
+
+## Endpoints utilitaires
+
+- `GET /health` → `{ "status": "ok" }`
+
+## Gestion d'erreurs
+
+- `400` : fichier absent, extension invalide, fichier trop volumineux, colonnes manquantes, Excel vide
+- `500` : erreur interne serveur
+
+Format erreur :
+
+```json
+{ "error": "message clair" }
+```
+
+## CORS
+
+- Autorise automatiquement :
+  - Origines `*.github.io`
+  - `http://localhost...`
+- Vous pouvez fixer une origine explicite via `FRONTEND_ORIGIN`.
+
+## Lancement local
 
 ```bash
-pip install -r requirements.txt
-python app.py
+npm install
+npm start
 ```
+
+Par défaut : port `10000`, ou `process.env.PORT` (compatible Render).
+
+## Déploiement Render
+
+- Runtime : **Node**
+- Build Command :
+  ```bash
+  npm install
+  ```
+- Start Command :
+  ```bash
+  npm start
+  ```
