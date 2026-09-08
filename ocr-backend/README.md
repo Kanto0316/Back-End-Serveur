@@ -16,7 +16,14 @@ export FIREBASE_SERVICE_ACCOUNT='{"type":"service_account", ...}'
 uvicorn app.main:app --reload
 ```
 
-`FIREBASE_SERVICE_ACCOUNT` contient le JSON complet du compte de service sur une seule ligne. Si elle est absente, Firebase Admin utilise les Application Default Credentials. Paramètres optionnels : `MAX_IMAGE_BYTES` (10 Mio), `MAX_IMAGE_DIMENSION` (2400 px), `OCR_RATE_LIMIT_PER_MINUTE` (30).
+Variables Render attendues :
+
+- `FIREBASE_PROJECT_ID` : ID du projet Firebase utilisé par le frontend (et non son nom d'affichage) ;
+- `FIREBASE_SERVICE_ACCOUNT` : JSON complet du compte de service sur une seule ligne. Son champ `project_id` doit être identique à `FIREBASE_PROJECT_ID`. Ne jamais enregistrer ce JSON dans Git.
+
+Si `FIREBASE_SERVICE_ACCOUNT` est absente, Firebase Admin utilise les Application Default Credentials ; dans ce cas `FIREBASE_PROJECT_ID` reste obligatoire. Paramètres optionnels : `MAX_IMAGE_BYTES` (10 Mio), `MAX_IMAGE_DIMENSION` (2400 px), `OCR_RATE_LIMIT_PER_MINUTE` (30).
+
+Les refus d'authentification sont classés sans journaliser le token, l'en-tête Authorization ou le compte de service : `TOKEN_MISSING`, `TOKEN_EXPIRED`, `TOKEN_INVALID`, `TOKEN_WRONG_PROJECT`, `SERVER_AUTH_CONFIG_ERROR`. Un utilisateur authentifié sans la custom claim requise reçoit `403 OCR_FORBIDDEN`.
 
 Pour accorder l'accès, définir la custom claim booléenne `ocrAdmin: true` côté administration Firebase. Les rôles, e-mails et paramètres d'administration transmis par le client sont ignorés.
 

@@ -80,7 +80,7 @@ async def health() -> dict[str, str]:
 @app.post(
     "/v1/ocr/articles",
     response_model=OcrResponse,
-    responses={code: {"model": ErrorResponse} for code in (400, 401, 403, 413, 415, 422, 429, 500)},
+    responses={code: {"model": ErrorResponse} for code in (400, 401, 403, 413, 415, 422, 429, 500, 503)},
 )
 async def ocr_articles(request: Request, image: UploadFile, claims: dict = Depends(require_ocr_admin)) -> OcrResponse:
     settings = get_settings()
