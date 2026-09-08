@@ -31,6 +31,50 @@ def setup_function() -> None:
     _requests.clear()
 
 
+def test_health() -> None:
+    response = TestClient(app).get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_cors_preflight_allows_github_pages_origin() -> None:
+    response = TestClient(app).options(
+        "/v1/ocr/articles",
+        headers={
+            "Origin": "https://kanto0316.github.io",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "Authorization, Content-Type",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://kanto0316.github.io"
+    assert "POST" in response.headers["access-control-allow-methods"]
+    assert "Authorization" in response.headers["access-control-allow-headers"]
+
+
+def test_cors_does_not_allow_another_origin() -> None:
+    response = TestClient(app).options(
+        "/v1/ocr/articles",
+        headers={
+            "Origin": "https://example.com",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "Authorization, Content-Type",
+        },
+    )
+    assert response.status_code == 400
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_cors_headers_are_present_on_authentication_errors() -> None:
+    response = TestClient(app).post(
+        "/v1/ocr/articles",
+        headers={"Origin": "https://kanto0316.github.io"},
+        files={"image": ("list.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 401
+    assert response.headers["access-control-allow-origin"] == "https://kanto0316.github.io"
+
+
 def test_valid_image_and_successful_extraction() -> None:
     app.dependency_overrides[require_ocr_admin] = authorized
     app.state.ocr_provider = StubOcr("200LDV102350STD INTERMEDIAIRE INOX AUTO M12 INOX A2")
