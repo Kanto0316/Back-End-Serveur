@@ -75,6 +75,38 @@ def test_cors_headers_are_present_on_authentication_errors() -> None:
     assert response.headers["access-control-allow-origin"] == "https://kanto0316.github.io"
 
 
+def test_cors_headers_are_present_on_forbidden_errors() -> None:
+    async def forbidden() -> dict:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=403, detail=("OCR_FORBIDDEN", "Permission OCR requise"))
+
+    app.dependency_overrides[require_ocr_admin] = forbidden
+    response = TestClient(app).post(
+        "/v1/ocr/articles",
+        headers={"Origin": "https://kanto0316.github.io"},
+        files={"image": ("list.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 403
+    assert response.headers["access-control-allow-origin"] == "https://kanto0316.github.io"
+
+
+def test_cors_headers_are_present_on_auth_configuration_errors() -> None:
+    async def unavailable() -> dict:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=503, detail=("SERVER_AUTH_CONFIG_ERROR", "Authentification indisponible"))
+
+    app.dependency_overrides[require_ocr_admin] = unavailable
+    response = TestClient(app).post(
+        "/v1/ocr/articles",
+        headers={"Origin": "https://kanto0316.github.io"},
+        files={"image": ("list.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 503
+    assert response.headers["access-control-allow-origin"] == "https://kanto0316.github.io"
+
+
 def test_valid_image_and_successful_extraction() -> None:
     app.dependency_overrides[require_ocr_admin] = authorized
     app.state.ocr_provider = StubOcr("200LDV102350STD INTERMEDIAIRE INOX AUTO M12 INOX A2")
