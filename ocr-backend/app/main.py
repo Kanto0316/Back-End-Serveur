@@ -4,6 +4,7 @@ from collections import defaultdict, deque
 
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, status
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -30,6 +31,15 @@ async def request_id_middleware(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Request-ID"] = request.state.request_id
     return response
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://kanto0316.github.io"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 
 @app.exception_handler(HTTPException)
@@ -60,6 +70,11 @@ def enforce_rate_limit(uid: str) -> None:
     if len(bucket) >= limit:
         raise HTTPException(status_code=429, detail=("RATE_LIMITED", "Limite de requêtes dépassée"))
     bucket.append(now)
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
 
 
 @app.post(
