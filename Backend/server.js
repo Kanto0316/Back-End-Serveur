@@ -32,7 +32,12 @@ cloudinary.config({
 
 const app = express();
 const port = process.env.PORT || 3000;
-const frontendUrl = process.env.FRONTEND_URL.replace(/\/$/, '');
+const allowedOrigins = [
+  'https://kanto0316.github.io',
+  process.env.FRONTEND_URL,
+]
+  .filter(Boolean)
+  .map((origin) => origin.replace(/\/$/, ''));
 
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
@@ -42,7 +47,12 @@ app.use(
     origin(origin, callback) {
       // Les requêtes sans en-tête Origin (Render, curl, monitoring) ne sont pas
       // concernées par CORS. Les navigateurs sont limités au frontend déclaré.
-      if (!origin || origin.replace(/\/$/, '') === frontendUrl) {
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (allowedOrigins.includes(origin.replace(/\/$/, ''))) {
+        console.log('[CORS OK]', origin);
         return callback(null, true);
       }
 
