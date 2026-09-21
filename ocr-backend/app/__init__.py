@@ -1,1 +1,0 @@
-"""Suivi Matériel OCR API."""
