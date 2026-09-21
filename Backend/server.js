@@ -46,6 +46,10 @@ app.use(
         return callback(null, true);
       }
 
+      console.warn('[CORS BLOCKED]', {
+        origin: origin || 'none',
+      });
+
       return callback(new Error('Origine non autorisée par CORS'));
     },
     methods: ['GET', 'POST'],
@@ -54,6 +58,16 @@ app.use(
 );
 
 app.use(express.json({ limit: '10kb' }));
+
+app.use((req, res, next) => {
+  console.log('[HTTP]', {
+    method: req.method,
+    path: req.path,
+    origin: req.headers.origin || 'none',
+    contentType: req.headers['content-type'] || 'none',
+  });
+  next();
+});
 
 const deleteImageLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -73,6 +87,11 @@ app.get('/', (_request, response) => {
 });
 
 app.post('/api/cloudinary/delete', deleteImageLimiter, async (request, response) => {
+  console.log('[CLOUDINARY DELETE REQUEST]', {
+    bodyReceived: request.body,
+    hasPublicId: Boolean(request.body?.publicId),
+  });
+
   const { publicId } = request.body ?? {};
 
   if (typeof publicId !== 'string' || !publicIdPattern.test(publicId)) {
@@ -83,7 +102,15 @@ app.post('/api/cloudinary/delete', deleteImageLimiter, async (request, response)
   }
 
   try {
+    console.log('[CLOUDINARY DESTROY START]', {
+      publicIdLength: String(publicId).length,
+    });
+
     const result = await cloudinary.uploader.destroy(publicId);
+
+    console.log('[CLOUDINARY DESTROY RESULT]', {
+      result: result.result,
+    });
 
     if (!['ok', 'not found'].includes(result.result)) {
       throw new Error(`Réponse Cloudinary inattendue : ${result.result}`);
@@ -94,7 +121,10 @@ app.post('/api/cloudinary/delete', deleteImageLimiter, async (request, response)
       message: 'Image supprimée de Cloudinary',
     });
   } catch (error) {
-    console.error('Échec de la suppression Cloudinary :', error.message);
+    console.error('[CLOUDINARY DELETE ERROR]', {
+      message: error.message,
+      name: error.name,
+    });
 
     return response.status(502).json({
       success: false,
