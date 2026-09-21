@@ -1,0 +1,20 @@
+{
+  "name": "suivi-materiel-backend",
+  "version": "1.0.0",
+  "description": "API de suppression sécurisée des images Cloudinary pour Suivi Matériel",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "cloudinary": "^2.7.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "express-rate-limit": "^7.5.0"
+  }
+}
